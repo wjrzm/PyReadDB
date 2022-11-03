@@ -1,8 +1,10 @@
-from ctypes import sizeof
 import sqlite3
 import struct
 import numpy as np
 import quaternion
+import time
+import matplotlib.pyplot as plt
+from dtaidistance import dtw
 
 CSTIME = 62135596800000
 TODAYTIME = 1659283200000
@@ -23,23 +25,65 @@ def getIntArrayFromByteArray(b):
 
     return rt
 
+def slerp(startImu,endImu,kinect):
+    cosTheta = startImu[2]*endImu[2] + startImu[3]*endImu[3] + startImu[4]*endImu[4] + startImu[5]*endImu[5]
+
+    if cosTheta < 0.0:
+        endImu[2] = -endImu[2]
+        endImu[3] = -endImu[3]
+        endImu[4] = -endImu[4]
+        endImu[5] = -endImu[5]
+        cosTheta = -cosTheta
+    
+    if cosTheta > 0.9999:
+        frontScale = (endImu[0] - kinect[0]) / (endImu[0] - startImu[0])
+        backScale = (kinect[0] - startImu[0]) / (endImu[0] - startImu[0])
+    else:
+        sinTheta = np.sqrt(1-cosTheta*cosTheta)
+        theta = np.arctan2(sinTheta,cosTheta)
+        frontScale = np.sin((endImu[0] - kinect[0]) / (endImu[0] - startImu[0])*theta/sinTheta)
+        backScale = np.sin((kinect[0] - startImu[0]) / (endImu[0] - startImu[0]) * theta) / sinTheta
+    
+    wSyn = startImu[2] * frontScale + endImu[2] * backScale
+    xSyn = startImu[3] * frontScale + endImu[3] * backScale
+    ySyn = startImu[4] * frontScale + endImu[4] * backScale
+    zSyn = startImu[5] * frontScale + endImu[5] * backScale
+    return wSyn, xSyn, ySyn, zSyn
+
+def lerp(startImu,endImu,kinect):
+    frontScale = (endImu[0] - kinect[0]) / (endImu[0] - startImu[0])
+    backScale = (kinect[0] - startImu[0]) / (endImu[0] - startImu[0])
+    wSyn = startImu[2] * frontScale + endImu[2] * backScale
+    xSyn = startImu[3] * frontScale + endImu[3] * backScale
+    ySyn = startImu[4] * frontScale + endImu[4] * backScale
+    zSyn = startImu[5] * frontScale + endImu[5] * backScale
+    return wSyn, xSyn, ySyn, zSyn
+
+
 def timeSynImu(npImu,npKinect):
     i = 0
     j = 0
     k = 1
-    npSynImu = np.empty((0,6)) # time,id,w,x,y,z
+    synImu = [] # time,id,w,x,y,z
+    synKinect = []
     
     
     while k < npImu.shape[0] and i < npKinect.shape[0]:
         if npImu[j][0] <= npKinect[i][0] and npImu[k][0] >= npKinect[i][0]:
             if npImu[k][0] - npImu[j][0] != 0:
-                frontScale = (npImu[k][0] - npKinect[i][0]) / (npImu[k][0] - npImu[j][0])
-                backScale = (npKinect[i][0] - npImu[j][0]) / (npImu[k][0] - npImu[j][0])# need to fix
-                wSyn = npImu[j][2] * frontScale + npImu[k][2] * backScale
-                xSyn = npImu[j][3] * frontScale + npImu[k][3] * backScale
-                ySyn = npImu[j][4] * frontScale + npImu[k][4] * backScale
-                zSyn = npImu[j][5] * frontScale + npImu[k][5] * backScale
-                npSynImu = np.append(npSynImu,np.array([[npKinect[i][0],npImu[j][1],wSyn,xSyn,ySyn,zSyn]]),axis=0)
+
+                # frontScale = (npImu[k][0] - npKinect[i][0]) / (npImu[k][0] - npImu[j][0])
+                # backScale = (npKinect[i][0] - npImu[j][0]) / (npImu[k][0] - npImu[j][0])# need to fix
+                # wSyn = npImu[j][2] * frontScale + npImu[k][2] * backScale
+                # xSyn = npImu[j][3] * frontScale + npImu[k][3] * backScale
+                # ySyn = npImu[j][4] * frontScale + npImu[k][4] * backScale
+                # zSyn = npImu[j][5] * frontScale + npImu[k][5] * backScale
+                
+                # wSyn,xSyn,ySyn,zSyn = slerp(npImu[j],npImu[k],npKinect[i])
+                wSyn,xSyn,ySyn,zSyn = lerp(npImu[j],npImu[k],npKinect[i])
+                
+                synImu.append([npKinect[i][0],npImu[j][1],wSyn,xSyn,ySyn,zSyn])
+                synKinect.append(npKinect[i])
                 i += 1
                 j += 1
                 k = j + 1
@@ -52,13 +96,15 @@ def timeSynImu(npImu,npKinect):
             j += 1
             k = j + 1
     
-    return npSynImu
+    npSynImu = np.asarray(synImu)
+    npSynKinect = np.asarray(synKinect)
+    return npSynImu, npSynKinect
 
 con = sqlite3.connect('20220809_103505_424.db')
 cur = con.cursor()
 
-npImu = np.empty((0,6)) # time,id,w,x,y,z
-npKinect = np.empty((0,2)) # time,id
+npImu = []
+npKinect = []
 
 
 print("----------------------------------read Table:IMUData(北京超核电子)----------------------------------")
@@ -79,9 +125,11 @@ for row in cur.execute('SELECT * FROM IMUData where DeviceID = 1 order by PCCurT
     z = getFloatFromByteArray(row[2],4)[3]
     # quatImu = np.quaternion(w, x, y, z)
     
-    npImu = np.append(npImu,np.array([[relaTime,row[0],w,x,y,z]]),axis = 0)
-    
-print(npImu.shape)
+    npImu.append([relaTime,row[0],w,x,y,z])# faster
+    # npImu = np.append(npImu,np.array([[relaTime,row[0],w,x,y,z]]),axis = 0)
+
+npImu = np.asarray(npImu) 
+print(npImu)
 
 
 print("\n\n\n----------------------------------read Table:Kinect(Kinect Azure)----------------------------------")
@@ -94,11 +142,26 @@ for row in cur.execute('SELECT * FROM Kinect order by PCCurTimeMS '):
     # print("\n")
     
     relaTime = row[1] -  CSTIME - TODAYTIME
-
-    npKinect = np.append(npKinect,np.array([[relaTime,row[0]]]),axis = 0)
+    npKinect.append([relaTime,row[0]])
+    # npKinect = np.append(npKinect,np.array([[relaTime,row[0]]]),axis = 0)
+npKinect = np.asarray(npKinect) 
 print(npKinect.shape)
+time0 = time.time()
+timeSynedImu,timeSynedKinect = timeSynImu(npImu,npKinect)
+time1 = time.time()
+print(time1 - time0)
+print(timeSynedImu.shape)
+print(timeSynedKinect.shape)
 
-print(timeSynImu(npImu,npKinect))
+distImu = dtw.distance_fast(timeSynedImu[:,2], npImu[:,2])
+
+print(distImu)
+
+plt.plot(timeSynedImu[:,2],color = 'r')#s-:方形
+plt.plot(npImu[:,2],color = 'b')#s-:方形
+plt.xlabel("region length")#横坐标名字
+plt.ylabel("accuracy")#纵坐标名字
+plt.show()
 
 
 # print("\n\n\n----------------------------------read Table:NTData(诺依腾)----------------------------------")
@@ -136,70 +199,3 @@ print(timeSynImu(npImu,npKinect))
 
 con.close()
 
-
-#诺依腾设备的骨骼节点的枚举数值
-    # public enum EMCPJointTag
-    # {
-    #     JointTag_Invalid=-1,
-    #     JointTag_Hips=0,
-    #     JointTag_RightUpLeg=1,
-    #     JointTag_RightLeg=2,
-    #     JointTag_RightFoot=3,
-    #     JointTag_LeftUpLeg=4,
-    #     JointTag_LeftLeg=5,
-    #     JointTag_LeftFoot=6,
-    #     JointTag_Spine=7,
-    #     JointTag_Spine1=8,
-    #     JointTag_Spine2=9,
-    #     JointTag_Neck=10,
-    #     JointTag_Neck1=11,
-    #     JointTag_Head=12,
-    #     JointTag_RightShoulder=13,
-    #     JointTag_RightArm=14,
-    #     JointTag_RightForeArm=15,
-    #     JointTag_RightHand=16,
-    #     JointTag_RightHandThumb1=17,
-    #     JointTag_RightHandThumb2=18,
-    #     JointTag_RightHandThumb3=19,
-    #     JointTag_RightInHandIndex=20,
-    #     JointTag_RightHandIndex1=21,
-    #     JointTag_RightHandIndex2=22,
-    #     JointTag_RightHandIndex3=23,
-    #     JointTag_RightInHandMiddle=24,
-    #     JointTag_RightHandMiddle1=25,
-    #     JointTag_RightHandMiddle2=26,
-    #     JointTag_RightHandMiddle3=27,
-    #     JointTag_RightInHandRing=28,
-    #     JointTag_RightHandRing1=29,
-    #     JointTag_RightHandRing2=30,
-    #     JointTag_RightHandRing3=31,
-    #     JointTag_RightInHandPinky=32,
-    #     JointTag_RightHandPinky1=33,
-    #     JointTag_RightHandPinky2=34,
-    #     JointTag_RightHandPinky3=35,
-    #     JointTag_LeftShoulder=36,
-    #     JointTag_LeftArm=37,
-    #     JointTag_LeftForeArm=38,
-    #     JointTag_LeftHand=39,
-    #     JointTag_LeftHandThumb1=40,
-    #     JointTag_LeftHandThumb2=41,
-    #     JointTag_LeftHandThumb3=42,
-    #     JointTag_LeftInHandIndex=43,
-    #     JointTag_LeftHandIndex1=44,
-    #     JointTag_LeftHandIndex2=45,
-    #     JointTag_LeftHandIndex3=46,
-    #     JointTag_LeftInHandMiddle=47,
-    #     JointTag_LeftHandMiddle1=48,
-    #     JointTag_LeftHandMiddle2=49,
-    #     JointTag_LeftHandMiddle3=50,
-    #     JointTag_LeftInHandRing=51,
-    #     JointTag_LeftHandRing1=52,
-    #     JointTag_LeftHandRing2=53,
-    #     JointTag_LeftHandRing3=54,
-    #     JointTag_LeftInHandPinky=55,
-    #     JointTag_LeftHandPinky1=56,
-    #     JointTag_LeftHandPinky2=57,
-    #     JointTag_LeftHandPinky3=58,
-    #     JointTag_Spine3=59,
-    #     JointTag_JointsCount=60,
-    # };
