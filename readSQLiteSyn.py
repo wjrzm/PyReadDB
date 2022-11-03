@@ -31,17 +31,21 @@ def timeSynImu(npImu,npKinect):
     
     
     while k < npImu.shape[0] and i < npKinect.shape[0]:
-        if npImu[j][0] < npKinect[i][0] and npImu[k][0] > npKinect[i][0]:
-            frontScale = (npImu[k][0] - npKinect[i][0]) / (npImu[k][0] - npImu[j][0])
-            backScale = (npKinect[i][0] - npImu[k][0]) / (npImu[k][0] - npImu[j][0])# need to fix
-            wSyn = npImu[j][2] * frontScale + npImu[k][2] * backScale
-            xSyn = npImu[j][3] * frontScale + npImu[k][3] * backScale
-            ySyn = npImu[j][4] * frontScale + npImu[k][4] * backScale
-            zSyn = npImu[j][5] * frontScale + npImu[k][5] * backScale
-            npSynImu = np.append(npSynImu,[[npKinect[i][0],npImu[j][1],wSyn,xSyn,ySyn,zSyn]])
-            i += 1
-            j += 1
-            k = j + 1
+        if npImu[j][0] <= npKinect[i][0] and npImu[k][0] >= npKinect[i][0]:
+            if npImu[k][0] - npImu[j][0] != 0:
+                frontScale = (npImu[k][0] - npKinect[i][0]) / (npImu[k][0] - npImu[j][0])
+                backScale = (npKinect[i][0] - npImu[j][0]) / (npImu[k][0] - npImu[j][0])# need to fix
+                wSyn = npImu[j][2] * frontScale + npImu[k][2] * backScale
+                xSyn = npImu[j][3] * frontScale + npImu[k][3] * backScale
+                ySyn = npImu[j][4] * frontScale + npImu[k][4] * backScale
+                zSyn = npImu[j][5] * frontScale + npImu[k][5] * backScale
+                npSynImu = np.append(npSynImu,np.array([[npKinect[i][0],npImu[j][1],wSyn,xSyn,ySyn,zSyn]]),axis=0)
+                i += 1
+                j += 1
+                k = j + 1
+            else:
+                j += 1
+                k = j + 1
         elif npImu[j][0] > npKinect[i][0]:
             i += 1
         elif npImu[k][0] < npKinect[i][0]:
