@@ -134,7 +134,8 @@ class pbThread(threading.Thread):
             lock.release()
 
 if __name__ == "__main__":
-    HOST, PORT = "114.212.171.172", 50001
+    # HOST, PORT = "114.212.171.172", 50001
+    HOST, PORT = "172.28.131.113", 50001
 
     con = sqlite3.connect('20220809_103505_424.db',check_same_thread=False)
     cur = con.cursor()

@@ -33,14 +33,15 @@ def client(ip, port, message):
         # print ("Send: {}".format(message))
         # print(len(message))
         sock.sendall(message)
-        response = sock.recv(64).decode('utf-8')
-        print (f"Recv: {response}") #json文件
+        # response = sock.recv(64).decode('utf-8')
+        # print (f"Recv: {response}") #json文件
 
     finally:
         sock.close()
 
 if __name__ == "__main__":
-    HOST, PORT = "114.212.171.172", 50001
+    # HOST, PORT = "114.212.171.172", 50001
+    HOST, PORT = "127.0.0.1", 50001
 
     con = sqlite3.connect('20220809_103505_424.db',check_same_thread=False)
     cur = con.cursor()
